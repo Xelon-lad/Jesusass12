@@ -1,0 +1,13 @@
+{
+  "name": "crypto-risk-game",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "live-server"
+  },
+  "dependencies": {
+    "particles.js": "^2.0.0"
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  }
+}
