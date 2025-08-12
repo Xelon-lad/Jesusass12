@@ -2,16 +2,17 @@
 const config = {
     startBalance: 10000,
     betOptions: [10, 50, 100, 500],
-    baseMultiplier: 2.5,
-    visibleLevels: 2,
+    baseMultiplier: 1.0,
+    visibleLevels: 3,
     multiplierStep: 0.5,
     levelHeight: 120,
     levelSpacing: 10,
     cellWidth: 80,
     cellHeight: 100,
-    cellBackground: 'rgba(0, 123, 255, 0.7)',
-    cellBorder: '2px solid #00f0ff',
-    animationDuration: 300
+    cellBackground: 'rgba(108, 92, 231, 0.1)',
+    cellBorder: '1px solid rgba(108, 92, 231, 0.3)',
+    animationDuration: 300,
+    maxLevels: 10 // добавлено
 };
 
 // Состояние игры
@@ -24,13 +25,15 @@ const state = {
     isAnimating: false,
     levelsPassed: 0,
     currentCorrectIndex: 0,
-    currentLevelRows: [],
     gameTimer: null,
     stats: {
         totalWins: 0,
         totalLevelsPassed: 0,
         gameHistory: []
-    }
+    },
+    gameStartTime: null,
+    elapsedSeconds: 0,
+    statsIntervalId: null
 };
 
 // Элементы DOM
@@ -50,7 +53,10 @@ const elements = {
     currentBalanceStat: document.getElementById('currentBalanceStat'),
     totalWins: document.getElementById('totalWins'),
     totalLevelsPassed: document.getElementById('totalLevelsPassed'),
-    statsHistory: document.getElementById('statsHistory')
+    statsHistory: document.getElementById('statsHistory'),
+    multiplierInfo: document.getElementById('multiplierInfo'),
+    progressFill: document.getElementById('progressFill'),
+    gameTime: document.getElementById('gameTime')
 };
 
 // Инициализация игры
@@ -63,37 +69,21 @@ function init() {
     setupEventListeners();
     selectBetAmount(10);
     updateUI();
-    
-    if (typeof particlesJS !== 'undefined') {
-        particlesJS("particles", {
-            particles: {
-                number: { value: 50 },
-                color: { value: "#00f0ff" },
-                shape: { type: "circle" },
-                opacity: { value: 0.5 },
-                size: { value: 3 },
-                line_linked: { enable: true, distance: 150 },
-                move: { enable: true, speed: 2 }
-            }
-        });
-    }
+    updateStats();
 }
 
 function checkElements() {
-    let allFound = true;
-    for (const [key, element] of Object.entries(elements)) {
-        if (!element) {
-            console.error(`Не найден элемент: ${key}`);
-            allFound = false;
-        }
-    }
-    return allFound;
+    return Object.values(elements).every(element => {
+        if (Array.isArray(element)) return true; // для NodeList
+        if (!element) console.warn('Элемент не найден:', element);
+        return !!element;
+    });
 }
 
 function setupEventListeners() {
     elements.betOptions.forEach(btn => {
         btn.addEventListener('click', () => {
-            const amount = parseInt(btn.dataset.amount);
+            const amount = parseInt(btn.getAttribute('data-amount') || btn.textContent);
             selectBetAmount(amount);
         });
     });
@@ -102,32 +92,43 @@ function setupEventListeners() {
     elements.cashoutBtn.addEventListener('click', cashout);
     elements.topupBtn.addEventListener('click', topupBalance);
     elements.levelContainer.addEventListener('click', handleCellClick);
-    elements.statsBtn.addEventListener('click', showStats);
-    elements.closeStats.addEventListener('click', hideStats);
+
+    if (elements.statsBtn && elements.closeStats) {
+        elements.statsBtn.addEventListener('click', showStats);
+        elements.closeStats.addEventListener('click', hideStats);
+    }
+
+    if (elements.statsModal) {
+        elements.statsModal.addEventListener('click', (e) => {
+            if (e.target === elements.statsModal) hideStats();
+        });
+    }
 }
 
 function showStats() {
+    if (!elements.statsModal) return;
     elements.statsModal.classList.add('active');
     updateStats();
 }
 
 function hideStats() {
+    if (!elements.statsModal) return;
     elements.statsModal.classList.remove('active');
 }
 
 function startGame() {
     if (state.isGameActive) {
-        showNotification("Игра уже начата!", 'warning');
+        showNotification("Игра уже начата! 🎮", 'warning');
         return;
     }
     
     if (state.balance < state.currentBet) {
-        showNotification("Недостаточно средств", 'error');
+        showNotification("Недостаточно средств 😔", 'error');
         return;
     }
     
     if (state.currentBet <= 0) {
-        showNotification("Выберите сумму ставки", 'warning');
+        showNotification("Выберите сумму ставки 💰", 'warning');
         return;
     }
     
@@ -138,8 +139,17 @@ function startGame() {
     state.currentLevel = 1;
     
     elements.levelContainer.innerHTML = '';
-    state.currentLevelRows = [];
     
+    state.gameStartTime = Date.now();
+    state.elapsedSeconds = 0;
+    if (state.statsIntervalId) clearInterval(state.statsIntervalId);
+    state.statsIntervalId = setInterval(() => {
+        if (state.gameStartTime) {
+            state.elapsedSeconds = Math.floor((Date.now() - state.gameStartTime) / 1000);
+            updateStats();
+        }
+    }, 1000);
+
     createLevel();
     
     elements.startBtn.disabled = true;
@@ -150,161 +160,128 @@ function startGame() {
 
 function createLevel() {
     const levelRow = document.createElement('div');
-    levelRow.className = 'level-row';
-    levelRow.style.display = 'flex';
-    levelRow.style.justifyContent = 'flex-start'; // Изменено с 'center'
-    levelRow.style.paddingRight = '45px'; // Добавлен отступ справа
-    levelRow.style.gap = '10px'; // Уменьшен промежуток между ячейками
-    levelRow.style.marginBottom = config.levelSpacing + 'px';
-    levelRow.style.opacity = '0';
-    levelRow.style.transform = 'scale(0.8)';
-    levelRow.style.transition = `all ${config.animationDuration}ms ease`;
-    levelRow.style.width = '100%';
-    levelRow.style.boxSizing = 'border-box';
+    levelRow.className = 'level-row animate__animated animate__fadeInUp';
 
-    state.currentCorrectIndex = Math.floor(Math.random() * 3);
+    // Динамический шанс успеха в зависимости от текущего уровня
+    let successChance;
+    if (state.currentLevel <= 5) {
+        successChance = 1; // 80% на первых 5 уровнях
+    } else if (state.currentLevel <= 10) {
+        successChance = 0.6; // 60% на уровнях 6-10
+    } else if (state.currentLevel <= 15) {
+        successChance = 0.4; // 40% на уровнях 11-15
+    } else {
+        successChance = 0.2; // 20% на высоких уровнях
+    }
+
+    // Определяем правильную ячейку с учетом шанса
+    state.currentCorrectIndex = Math.random() < successChance 
+        ? Math.floor(Math.random() * 3) // Выбираем случайную правильную
+        : -1; // Все ячейки неправильные (если не повезло)
+
+    const multiplierValue = state.currentMultiplier.toFixed(2);
 
     for (let i = 0; i < 3; i++) {
         const cell = document.createElement('div');
         cell.className = 'level-cell';
         cell.dataset.index = i;
-        cell.style.width = config.cellWidth + 'px';
-        cell.style.height = config.cellHeight + 'px';
-        cell.style.background = config.cellBackground;
-        cell.style.border = config.cellBorder;
-        cell.style.borderRadius = '10px';
-        cell.style.display = 'flex';
-        cell.style.alignItems = 'center';
-        cell.style.justifyContent = 'center';
-        cell.style.fontSize = '24px';
-        cell.style.fontWeight = 'bold';
-        cell.style.color = 'white';
-        cell.style.cursor = 'pointer';
-        cell.style.textShadow = '0 0 10px rgba(0, 255, 255, 0.7)';
-        cell.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-        cell.style.transition = 'all 0.3s ease';
-        cell.style.padding = '0';
-        cell.style.margin = '0';
-        cell.style.boxSizing = 'border-box';
+        cell.innerHTML = `
+            <span class="level-number left">${state.currentLevel}</span>
+            <span class="level-multiplier">${multiplierValue}x</span>
+            <span class="level-number right">${state.currentLevel}</span>
+        `;
         
-        // Оптимизация хитбокса
-        cell.style.padding = '0';
-        cell.style.margin = '0';
-        cell.style.boxSizing = 'border-box';
-        cell.style.position = 'relative';
-        cell.style.overflow = 'hidden';
-
-        // Контент ячейки
-        const multiplier = document.createElement('div');
-        multiplier.textContent = `${state.currentMultiplier.toFixed(1)}x`;
-        multiplier.style.width = '100%';
-        multiplier.style.height = '100%';
-        multiplier.style.display = 'flex';
-        multiplier.style.alignItems = 'center';
-        multiplier.style.justifyContent = 'center';
-        cell.appendChild(multiplier);
-
-        // Hover-эффекты
-        cell.addEventListener('mouseenter', () => {
-            cell.style.transform = 'scale(1.05)';
-            cell.style.boxShadow = '0 0 15px rgba(0, 240, 255, 0.7)';
-            cell.style.zIndex = '10';
-        });
-        
-        cell.addEventListener('mouseleave', () => {
-            cell.style.transform = '';
-            cell.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-            cell.style.zIndex = '';
-        });
+        // Помечаем правильную ячейку (если она есть)
+        if (i === state.currentCorrectIndex) {
+            cell.dataset.correct = "true";
+        }
 
         levelRow.appendChild(cell);
     }
 
-    elements.levelContainer.insertBefore(levelRow, elements.levelContainer.firstChild);
+    elements.levelContainer.appendChild(levelRow);
     
+    // Удаляем старые уровни, если их слишком много
+    const maxRendered = Math.max(config.visibleLevels * 2, 10);
+    while (elements.levelContainer.children.length > maxRendered) {
+        elements.levelContainer.removeChild(elements.levelContainer.firstChild);
+    }
+
     setTimeout(() => {
-        levelRow.style.opacity = '1';
-        levelRow.style.transform = 'scale(1)';
-    }, 50);
-
-    // Обновление позиций уровней
-    updateLevelPositions();
-}
-
-function updateLevelPositions() {
-    const allRows = elements.levelContainer.querySelectorAll('.level-row');
-    allRows.forEach((row, index) => {
-        if (index > 0) {
-            row.style.transform = `translateY(${index * (config.levelHeight + config.levelSpacing)}px)`;
-        }
-    });
+        levelRow.classList.remove('animate__fadeInUp');
+    }, 300);
 }
 
 function handleCellClick(e) {
+    if (!state.isGameActive || state.isAnimating) return;
+    
     const cell = e.target.closest('.level-cell');
-    
-    if (!state.isGameActive || state.isAnimating || !cell) {
-        return;
-    }
-    
-    // Проверка точного попадания в ячейку
-    const rect = cell.getBoundingClientRect();
-    const isClickInside = (
-        e.clientX >= rect.left &&
-        e.clientX <= rect.right &&
-        e.clientY >= rect.top &&
-        e.clientY <= rect.bottom
-    );
-    
-    if (!isClickInside) return;
+    if (!cell) return;
     
     state.isAnimating = true;
-    const selectedIndex = parseInt(cell.dataset.index);
-    const isCorrect = selectedIndex === state.currentCorrectIndex;
+    const selectedIndex = parseInt(cell.dataset.index, 10);
     
-    // Визуальная обратная связь
-    cell.style.background = isCorrect ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
-    cell.style.transform = 'scale(0.95)';
+    // Проверяем, есть ли вообще правильная ячейка на этом уровне
+    const hasCorrectCell = state.currentCorrectIndex >= 0;
+    const isCorrect = hasCorrectCell && (selectedIndex === state.currentCorrectIndex);
+    
+    cell.classList.add(isCorrect ? 'correct-option' : 'wrong-choice');
+    cell.classList.add('animate__animated', isCorrect ? 'animate__pulse' : 'animate__headShake');
     
     setTimeout(() => {
         if (isCorrect) {
             handleLevelSuccess();
         } else {
+            // Если нет правильной ячейки - всегда проигрыш
             handleGameOver();
         }
         state.isAnimating = false;
-    }, 500);
+    }, 800);
 }
 
 function handleLevelSuccess() {
-    state.levelsPassed++;
-    state.currentMultiplier += config.multiplierStep;
-    state.currentLevel++;
-    
-    animateLevelsUp();
-    
-    setTimeout(() => {
-        createLevel();
-        updateUI();
-        updateCashoutButton();
-        showNotification(`Уровень ${state.levelsPassed} пройден!`, 'success');
-    }, config.animationDuration);
+  // Создаем эффект подъема
+  const levelUpEffect = document.createElement('div');
+  levelUpEffect.className = 'level-up-effect';
+  levelUpEffect.textContent = `+${config.multiplierStep.toFixed(1)}x`;
+  
+  // Позиционируем относительно игрового поля
+  const gameRect = elements.levelContainer.getBoundingClientRect();
+  levelUpEffect.style.left = `${gameRect.width / 2}px`;
+  levelUpEffect.style.top = `${gameRect.height / 2}px`;
+  
+  // Добавляем в контейнер
+  elements.levelContainer.appendChild(levelUpEffect);
+  
+  // Удаляем после анимации
+  setTimeout(() => {
+    levelUpEffect.remove();
+  }, 1000);
+
+  // Стандартная логика
+  state.levelsPassed++;
+  state.currentMultiplier += config.multiplierStep;
+  state.currentLevel++;
+  
+  updateMultiplierDisplay();
+  createLevel();
+  updateCashoutButton();
+  showNotification(`Уровень ${state.levelsPassed} пройден! 🎉`, 'success');
 }
 
-function animateLevelsUp() {
-    const rows = elements.levelContainer.querySelectorAll('.level-row');
-    rows.forEach(row => {
-        const currentY = parseInt(row.style.transform.match(/translateY\((\d+)px\)/)?.[1] || 0);
-        row.style.transform = `translateY(${currentY + (config.levelHeight + config.levelSpacing)}px)`;
-    });
-}
 
 function handleGameOver() {
-    showNotification(`Проигрыш: -${state.currentBet} ₽`, 'error');
+    showNotification(`Проигрыш: -${state.currentBet} ₽ 😞`, 'error');
     endGame(false);
 }
 
 function endGame(isWin) {
+    if (state.statsIntervalId) {
+        clearInterval(state.statsIntervalId);
+        state.statsIntervalId = null;
+    }
+    state.gameStartTime = null;
+
     if (isWin) {
         const winAmount = Math.floor(state.currentBet * state.currentMultiplier);
         state.balance += winAmount;
@@ -325,109 +302,206 @@ function endGame(isWin) {
     updateUI();
     updateStats();
 }
-function selectBetAmount(amount) {
-    if (amount === 'max') {
-        state.currentBet = state.balance;
-    } else {
-        state.currentBet = Math.min(amount, state.balance);
+
+function cashout() {
+    if (!state.isGameActive) return;
+    
+    const winAmount = Math.floor(state.currentBet * state.currentMultiplier);
+    showNotification(`Вывод: +${winAmount} ₽ 💸`, 'success');
+    endGame(true);
+}
+
+function updateMultiplierDisplay() {
+    if (elements.multiplierInfo) {
+        elements.multiplierInfo.textContent = `${state.currentMultiplier.toFixed(2)}x`;
     }
-    
-    elements.betOptions.forEach(btn => {
-        btn.classList.remove('active');
-        if (parseInt(btn.dataset.amount) === state.currentBet) {
-            btn.classList.add('active');
-        }
-    });
-    
+    if (elements.progressFill) {
+        const progress = Math.min(100, (state.currentLevel / config.maxLevels) * 100);
+        elements.progressFill.style.width = `${progress}%`;
+    }
+}
+
+function selectBetAmount(amount) {
+    state.currentBet = Math.min(amount, state.balance);
     updateUI();
     updateCashoutButton();
 }
 
-// Кэшаут
-function cashout() {
-    if (!state.isGameActive || state.levelsPassed < 1) return;
-    
-    const winAmount = Math.floor(state.currentBet * state.currentMultiplier);
-    state.balance += winAmount;
-    state.stats.totalWins += winAmount;
-    state.stats.totalLevelsPassed += state.levelsPassed;
-    
-    state.stats.gameHistory.unshift({
-        date: new Date().toLocaleString(),
-        win: winAmount,
-        levels: state.levelsPassed,
-        bet: state.currentBet
-    });
-    
-    showNotification(`Вывод: +${winAmount} ₽`, 'success');
-    endGame(true);
-}
-
-// Пополнение баланса
 function topupBalance() {
     state.balance += 10000;
     updateUI();
-    showNotification("Баланс пополнен на 10 000 ₽", 'success');
+    showNotification("Баланс пополнен на 10 000 ₽ ✅", 'success');
 }
 
-// Обновление интерфейса
 function updateUI() {
-    elements.balance.textContent = `${state.balance.toLocaleString('ru-RU')} ₽`;
+    if (elements.balance) elements.balance.textContent = `${state.balance.toLocaleString('ru-RU')} ₽`;
+    elements.betOptions.forEach(btn => {
+        const amount = parseInt(btn.getAttribute('data-amount') || btn.textContent);
+        btn.classList.toggle('active', amount === state.currentBet);
+    });
+
+    updateCashoutButton();
 }
 
-// Обновление кнопки вывода
 function updateCashoutButton() {
     const winAmount = Math.floor(state.currentBet * state.currentMultiplier);
-    elements.cashoutAmount.textContent = winAmount;
-    elements.cashoutBtn.disabled = !state.isGameActive || state.levelsPassed < 1;
-}
-
-// Обновление статистики
-function updateStats() {
-    elements.initialDeposit.textContent = `${config.startBalance.toLocaleString('ru-RU')} ₽`;
-    elements.currentBalanceStat.textContent = `${state.balance.toLocaleString('ru-RU')} ₽`;
-    elements.totalWins.textContent = `${state.stats.totalWins.toLocaleString('ru-RU')} ₽`;
-    elements.totalLevelsPassed.textContent = state.stats.totalLevelsPassed;
-    
-    updateHistoryList();
-}
-
-// Обновление истории
-function updateHistoryList() {
-    elements.statsHistory.innerHTML = '';
-    
-    if (state.stats.gameHistory.length === 0) {
-        elements.statsHistory.innerHTML = '<div class="empty-history">Нет данных</div>';
-        return;
+    if (elements.cashoutAmount) {
+        elements.cashoutAmount.textContent = winAmount;
     }
-    
-    state.stats.gameHistory.forEach(game => {
-        const item = document.createElement('div');
-        item.className = 'history-item';
-        item.innerHTML = `
-            <span>${game.date}</span>
-            <span>+${game.win.toLocaleString('ru-RU')} ₽ (${game.levels} ур.)</span>
-        `;
-        elements.statsHistory.appendChild(item);
-    });
+    if (elements.cashoutBtn) {
+        elements.cashoutBtn.disabled = !state.isGameActive;
+    }
 }
 
-// Показать уведомление
+function formatTime(seconds) {
+    const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const ss = String(seconds % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+}
+
+function updateStats() {
+    if (elements.initialDeposit) elements.initialDeposit.textContent = `${config.startBalance.toLocaleString('ru-RU')} ₽`;
+    if (elements.currentBalanceStat) elements.currentBalanceStat.textContent = `${state.balance.toLocaleString('ru-RU')} ₽`;
+    if (elements.totalWins) elements.totalWins.textContent = `${state.stats.totalWins.toLocaleString('ru-RU')} ₽`;
+    if (elements.totalLevelsPassed) elements.totalLevelsPassed.textContent = state.stats.totalLevelsPassed;
+
+    if (elements.gameTime) {
+        const t = state.elapsedSeconds || 0;
+        elements.gameTime.textContent = formatTime(t);
+    }
+
+    if (elements.statsHistory) {
+        elements.statsHistory.innerHTML = state.stats.gameHistory.length 
+            ? state.stats.gameHistory.map(game => `
+                <div class="history-item ${game.win > 0 ? 'win' : 'loss'}">
+                    <span>${game.date}</span>
+                    <span>${game.win > 0 ? '+' : ''}${game.win.toLocaleString('ru-RU')} ₽</span>
+                </div>
+            `).join('')
+            : '<div class="empty-history">Нет данных</div>';
+    }
+}
+
 function showNotification(message, type) {
+    if (!elements.notification) return;
+    
     elements.notification.textContent = message;
-    elements.notification.className = 'game-notification show';
-    elements.notification.style.background = type === 'error' ? 'var(--danger)' : 
-                                           type === 'warning' ? 'var(--warning)' : 'var(--success)';
+    elements.notification.className = `game-notification show ${type}`;
     
     setTimeout(() => {
-        elements.notification.classList.remove('show');
+        if (elements.notification) elements.notification.classList.remove('show');
     }, 3000);
 }
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.userAgent);
-if (isMobile) {
-    // Настройки для мобильных
-    config.cellWidth = 70;
-    config.cellHeight = 90;
+
+function checkMobile() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.userAgent);
+    if (isMobile) {
+        config.cellWidth = 70;
+        config.cellHeight = 90;
+    }
 }
+
+// 1. Добавляем CSS для анимации
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes levelUpRise {
+    0% {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(-50%, -150px) scale(1.5);
+      opacity: 0;
+    }
+  }
+  .level-up-animation {
+    position: absolute;
+    font-size: 2rem;
+    font-weight: bold;
+    color: #00b894;
+    z-index: 1000;
+    animation: levelUpRise 0.8s cubic-bezier(0.68, -0.55, 0.27, 1.55) forwards;
+    pointer-events: none;
+    left: 50%;
+    top: 50%;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    white-space: nowrap;
+  }
+`;
+document.head.appendChild(style);
+
+// 2. Модифицируем функцию handleLevelSuccess
+function handleLevelSuccess() {
+  // Создаем анимацию подъёма
+  const riseAnimation = document.createElement('div');
+  riseAnimation.className = 'level-up-animation';
+  
+  // Разные сообщения для разных уровней
+  let message;
+  if (state.currentLevel <= 3) {
+    message = `Лёгкий уровень! +${config.multiplierStep.toFixed(1)}x`;
+    riseAnimation.style.color = '#00b894'; // Зелёный
+  } else if (state.currentLevel <= 7) {
+    message = `Хорошо! +${config.multiplierStep.toFixed(1)}x`;
+    riseAnimation.style.color = '#fdcb6e'; // Жёлтый
+  } else {
+    message = `Невероятно! +${config.multiplierStep.toFixed(1)}x`;
+    riseAnimation.style.color = '#6c5ce7'; // Фиолетовый
+  }
+  
+  riseAnimation.textContent = message;
+  
+  // Позиционируем по центру игрового поля
+  const gameRect = elements.levelContainer.getBoundingClientRect();
+  const centerX = gameRect.left + gameRect.width / 2;
+  const centerY = gameRect.top + gameRect.height / 2;
+  
+  riseAnimation.style.left = `${centerX}px`;
+  riseAnimation.style.top = `${centerY}px`;
+  
+  document.body.appendChild(riseAnimation);
+  
+  // Удаляем после завершения анимации
+  setTimeout(() => {
+    riseAnimation.remove();
+  }, 800);
+
+  // Стандартная логика прогресса
+  state.levelsPassed++;
+  state.currentMultiplier += config.multiplierStep;
+  state.currentLevel++;
+  
+  updateMultiplierDisplay();
+  createLevel();
+  updateCashoutButton();
+  showNotification(`Уровень ${state.levelsPassed} пройден! 🎉`, 'success');
+}
+
+// 3. Обновляем handleCellClick для корректной работы
+function handleCellClick(e) {
+    if (!state.isGameActive || state.isAnimating) return;
+    
+    const cell = e.target.closest('.level-cell');
+    if (!cell) return;
+    
+    state.isAnimating = true;
+    const selectedIndex = parseInt(cell.dataset.index, 10);
+    const isCorrect = selectedIndex === state.currentCorrectIndex;
+    
+    cell.classList.add(isCorrect ? 'correct-option' : 'wrong-choice');
+    cell.classList.add('animate__animated', isCorrect ? 'animate__pulse' : 'animate__headShake');
+    
+    setTimeout(() => {
+        if (isCorrect) {
+            handleLevelSuccess(); // Вызываем нашу новую функцию
+        } else {
+            handleGameOver();
+        }
+        state.isAnimating = false;
+    }, 500);
+}
+
+
 // Запуск игры
+checkMobile();
 document.addEventListener('DOMContentLoaded', init);

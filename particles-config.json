@@ -1,0 +1,105 @@
+{
+  "particles": {
+    "number": {
+      "value": 50,
+      "density": {
+        "enable": true,
+        "value_area": 900
+      }
+    },
+    "color": {
+      "value": "#93c5fd"
+    },
+    "shape": {
+      "type": "circle",
+      "stroke": {
+        "width": 0,
+        "color": "#000000"
+      },
+      "polygon": {
+        "nb_sides": 5
+      }
+    },
+    "opacity": {
+      "value": 0.4,
+      "random": true,
+      "anim": {
+        "enable": true,
+        "speed": 0.5,
+        "opacity_min": 0.1,
+        "sync": false
+      }
+    },
+    "size": {
+      "value": 4,
+      "random": true,
+      "anim": {
+        "enable": true,
+        "speed": 20,
+        "size_min": 0.1,
+        "sync": false
+      }
+    },
+    "line_linked": {
+      "enable": true,
+      "distance": 180,
+      "color": "#5a67d8",
+      "opacity": 0.3,
+      "width": 1.2
+    },
+    "move": {
+      "enable": true,
+      "speed": 1.5,
+      "direction": "none",
+      "random": true,
+      "straight": false,
+      "out_mode": "out",
+      "bounce": false,
+      "attract": {
+        "enable": true,
+        "rotateX": 800,
+        "rotateY": 1400
+      }
+    }
+  },
+  "interactivity": {
+    "detect_on": "canvas",
+    "events": {
+      "onhover": {
+        "enable": true,
+        "mode": "grab"
+      },
+      "onclick": {
+        "enable": true,
+        "mode": "push"
+      },
+      "resize": true
+    },
+    "modes": {
+      "grab": {
+        "distance": 200,
+        "line_linked": {
+          "opacity": 0.8
+        }
+      },
+      "bubble": {
+        "distance": 450,
+        "size": 45,
+        "duration": 2.5,
+        "opacity": 0.9,
+        "speed": 3.5
+      },
+      "repulse": {
+        "distance": 250,
+        "duration": 0.5
+      },
+      "push": {
+        "particles_nb": 5
+      },
+      "remove": {
+        "particles_nb": 3
+      }
+    }
+  },
+  "retina_detect": true
+}
